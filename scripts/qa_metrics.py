@@ -43,14 +43,15 @@ class SimpleJiraClient:
         kyiv_tz = pytz.timezone('Europe/Kiev')
         now = datetime.now(kyiv_tz)
         
-        # Знаходимо понеділок минулого тижня
+        # Тимчасово: візьмемо поточний тиждень для тестування
+        # Знаходимо понеділок поточного тижня
         days_since_monday = now.weekday()
-        monday_last_week = now - timedelta(days=days_since_monday + 7)
-        friday_last_week = monday_last_week + timedelta(days=4)
+        monday_this_week = now - timedelta(days=days_since_monday)
+        friday_this_week = monday_this_week + timedelta(days=4)
         
         # Встановлюємо час: 00:01 понеділка до 23:59 п'ятниці
-        start_date = monday_last_week.replace(hour=0, minute=1, second=0, microsecond=0)
-        end_date = friday_last_week.replace(hour=23, minute=59, second=59, microsecond=999999)
+        start_date = monday_this_week.replace(hour=0, minute=1, second=0, microsecond=0)
+        end_date = friday_this_week.replace(hour=23, minute=59, second=59, microsecond=999999)
         
         return start_date, end_date
     
