@@ -43,6 +43,13 @@ jobs:
         JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
       run: python scripts/test_jira.py
         
+    - name: Debug Jira statuses
+      env:
+        JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+        JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      run: python scripts/debug_statuses.py
+        
     - name: Generate and send QA metrics
       env:
         SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
