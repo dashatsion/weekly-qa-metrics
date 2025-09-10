@@ -43,6 +43,47 @@ class JiraMetricsCollector:
             print(f"Помилка для {project}: {e}")
             return []
     
+    def calculate_working_hours(self, start_time, end_time):
+        """Рахує робочі години між двома датами (понеділок-п'ятниця)"""
+        kyiv_tz = pytz.timezone('Europe/Kiev')
+        
+        # Конвертуємо в київський час
+        if start_time.tzinfo is None:
+            start_time = kyiv_tz.localize(start_time)
+        else:
+            start_time = start_time.astimezone(kyiv_tz)
+            
+        if end_time.tzinfo is None:
+            end_time = kyiv_tz.localize(end_time)
+        else:
+            end_time = end_time.astimezone(kyiv_tz)
+        
+        total_hours = 0
+        current_date = start_time.date()
+        end_date = end_time.date()
+        
+        while current_date <= end_date:
+            # Перевіряємо чи це робочий день (0=понеділок, 6=неділя)
+            if current_date.weekday() < 5:  # понеділок-п'ятниця
+                if current_date == start_time.date() and current_date == end_date:
+                    # Той самий день
+                    total_hours += (end_time - start_time).total_seconds() / 3600
+                elif current_date == start_time.date():
+                    # Перший день - від start_time до кінця дня
+                    end_of_day = datetime.combine(current_date, datetime.min.time()).replace(hour=23, minute=59, tzinfo=kyiv_tz)
+                    total_hours += (end_of_day - start_time).total_seconds() / 3600
+                elif current_date == end_date:
+                    # Останній день - від початку дня до end_time
+                    start_of_day = datetime.combine(current_date, datetime.min.time()).replace(hour=0, minute=1, tzinfo=kyiv_tz)
+                    total_hours += (end_time - start_of_day).total_seconds() / 3600
+                else:
+                    # Повний робочий день (24 години)
+                    total_hours += 24
+            
+            current_date += timedelta(days=1)
+        
+        return total_hours
+    
     def calculate_time_to_qa(self, issue):
         """Рахує час від створення до Ready for QA для конкретного issue"""
         try:
