@@ -56,7 +56,7 @@ class QAMetricsCollector:
         return start_date, end_date
     
     def get_ready_for_qa_metrics(self, project, start_date, end_date):
-        """Отримує метрики Ready For QA для проекту за період"""
+        """Отримує метрики Ready for QA для проекту за період"""
         
         print(f"\n=== Обробляю проект {project} ===")
         
@@ -76,18 +76,18 @@ class QAMetricsCollector:
                     print(f"  {issue['key']}: {status}")
             
             # Тепер шукаємо з точним статусом з вашої Jira
-            jql_qa = f'project = {project} AND status = "Ready For QA"'
+            jql_qa = f'project = {project} AND status = "Ready for QA"'
             qa_issues = self.search_issues(jql_qa, max_results=50)
             
             if qa_issues:
-                print(f"Issues зі статусом 'Ready For QA': {len(qa_issues)}")
+                print(f"Issues зі статусом 'Ready for QA': {len(qa_issues)}")
                 for issue in qa_issues:
                     print(f"  - {issue['key']}")
             else:
-                print("Не знайдено issues зі статусом 'Ready For QA'")
+                print("Не знайдено issues зі статусом 'Ready for QA'")
                 
                 # Спробуємо варіанти
-                variants = ["Ready for QA", "READY FOR QA", "Ready for Testing"]
+                variants = ["Ready for QA", "READY fOR QA", "Ready for Testing"]
                 for variant in variants:
                     jql_variant = f'project = {project} AND status = "{variant}"'
                     try:
