@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import pytz
 from statistics import median
 
-class QAMetricsCollector:
+class JiraMetricsCollector:
     def __init__(self):
         self.jira_email = os.environ['JIRA_EMAIL']
         self.jira_token = os.environ['JIRA_API_TOKEN']
@@ -21,110 +21,116 @@ class QAMetricsCollector:
         
         self.projects = ['GS2', 'GS1', 'PS2', 'GS5', 'RD1', 'GS3']
     
-    def search_issues(self, jql, max_results=1000):
-        """Пошук issues через REST API"""
-        url = f"{self.jira_url}/rest/api/2/search"
+    def get_issues_transitioned_to_qa(self, project):
+        """Знаходить issues що перейшли в Ready for QA за Sep 1-5"""
         
+        # JQL для пошуку issues що перейшли в Ready for QA за період
+        jql = f'project = {project} AND status changed to "Ready for QA" DURING ("2025-09-01", "2025-09-05")'
+        
+        url = f"{self.jira_url}/rest/api/2/search"
         params = {
             'jql': jql,
-            'maxResults': max_results,
             'expand': 'changelog',
-            'fields': 'created,status'
+            'fields': 'created,key',
+            'maxResults': 100
         }
         
-        print(f"Запит до: {url}")
-        print(f"JQL: {jql}")
-        
-        response = self.session.get(url, params=params, timeout=60)
-        print(f"Статус відповіді: {response.status_code}")
-        
-        response.raise_for_status()
-        data = response.json()
-        
-        print(f"Знайдено issues: {len(data['issues'])}")
-        return data['issues']
-    
-    def get_date_range(self):
-        """Отримує діапазон дат за поточний тиждень для тестування"""
-        kyiv_tz = pytz.timezone('Europe/Kiev')
-        now = datetime.now(kyiv_tz)
-        
-        # Беремо останні 7 днів для тестування
-        start_date = now - timedelta(days=7)
-        end_date = now
-        
-        return start_date, end_date
-    
-    def get_ready_for_qa_metrics(self, project, start_date, end_date):
-        """Отримує метрики Ready for QA для проекту за період"""
-        
-        print(f"\n=== Обробляю проект {project} ===")
-        
-        # Спочатку подивимося які issues взагалі є
-        jql_all = f'project = {project} AND created >= "{start_date.strftime("%Y-%m-%d")}"'
-        
         try:
-            all_issues = self.search_issues(jql_all, max_results=50)
-            
-            print(f"Всього issues в {project} за період: {len(all_issues)}")
-            
-            # Показуємо статуси
-            if all_issues:
-                print("Статуси знайдених issues:")
-                for issue in all_issues[:10]:  # показуємо перші 10
-                    status = issue['fields']['status']['name']
-                    print(f"  {issue['key']}: {status}")
-            
-            # Тепер шукаємо з точним статусом з вашої Jira
-            jql_qa = f'project = {project} AND status = "Ready for QA"'
-            qa_issues = self.search_issues(jql_qa, max_results=50)
-            
-            if qa_issues:
-                print(f"Issues зі статусом 'Ready for QA': {len(qa_issues)}")
-                for issue in qa_issues:
-                    print(f"  - {issue['key']}")
-            else:
-                print("Не знайдено issues зі статусом 'Ready for QA'")
-                
-                # Спробуємо варіанти
-                variants = ["Ready for QA", "READY fOR QA", "Ready for Testing"]
-                for variant in variants:
-                    jql_variant = f'project = {project} AND status = "{variant}"'
-                    try:
-                        variant_issues = self.search_issues(jql_variant, max_results=10)
-                        if variant_issues:
-                            print(f"Знайдено {len(variant_issues)} issues зі статусом '{variant}'")
-                            break
-                    except:
-                        continue
-            
-            return "0h 0m"  # Поки що повертаємо 0, поки не знайдемо правильний статус
-                
+            response = self.session.get(url, params=params, timeout=60)
+            response.raise_for_status()
+            return response.json()['issues']
         except Exception as e:
-            print(f"Помилка при отриманні метрик для {project}: {e}")
-            return "N/A"
+            print(f"Помилка для {project}: {e}")
+            return []
+    
+    def calculate_time_to_qa(self, issue):
+        """Рахує час від створення до Ready for QA для конкретного issue"""
+        try:
+            # Час створення
+            created_str = issue['fields']['created']
+            created_time = datetime.strptime(created_str[:19], '%Y-%m-%dT%H:%M:%S')
+            
+            # Шукаємо перехід в Ready for QA в changelog
+            qa_transition_time = None
+            
+            if 'changelog' in issue:
+                for history in issue['changelog']['histories']:
+                    for item in history['items']:
+                        if (item['field'] == 'status' and 
+                            item['toString'] == 'Ready for QA'):
+                            
+                            transition_str = history['created']
+                            qa_transition_time = datetime.strptime(
+                                transition_str[:19], '%Y-%m-%dT%H:%M:%S'
+                            )
+                            break
+                    if qa_transition_time:
+                        break
+            
+            if qa_transition_time:
+                # Рахуємо різницю в годинах (спрощений підхід)
+                time_diff = qa_transition_time - created_time
+                hours = time_diff.total_seconds() / 3600
+                return max(0, hours)  # не може бути негативним
+            
+            return None
+            
+        except Exception as e:
+            print(f"Помилка обчислення для {issue['key']}: {e}")
+            return None
     
     def format_time(self, hours):
         """Форматує час у годинах в формат 'Xh Ym'"""
+        if hours is None:
+            return "N/A"
+        
         total_hours = int(hours)
         minutes = int((hours - total_hours) * 60)
         return f"{total_hours}h {minutes}m"
     
+    def collect_metrics_for_project(self, project):
+        """Збирає метрики для одного проекту"""
+        print(f"\nОбробляю проект {project}...")
+        
+        issues = self.get_issues_transitioned_to_qa(project)
+        print(f"Знайдено {len(issues)} issues що перейшли в Ready for QA")
+        
+        if not issues:
+            return "0h 0m"
+        
+        times = []
+        for issue in issues:
+            issue_key = issue['key']
+            time_hours = self.calculate_time_to_qa(issue)
+            
+            if time_hours is not None:
+                times.append(time_hours)
+                print(f"  {issue_key}: {self.format_time(time_hours)}")
+            else:
+                print(f"  {issue_key}: не вдалося обчислити")
+        
+        if times:
+            median_hours = median(times)
+            result = self.format_time(median_hours)
+            print(f"Median для {project}: {result}")
+            return result
+        else:
+            print(f"Немає валідних даних для {project}")
+            return "0h 0m"
+    
     def collect_all_metrics(self):
         """Збирає метрики для всіх проектів"""
-        start_date, end_date = self.get_date_range()
-        
-        print(f"Збираю метрики за період: {start_date.strftime('%Y-%m-%d %H:%M')} - {end_date.strftime('%Y-%m-%d %H:%M')}")
+        print("Збираю метрики за період Sep 1-5, 2025...")
         
         metrics = {}
         for project in self.projects:
-            metrics[project] = self.get_ready_for_qa_metrics(project, start_date, end_date)
+            metrics[project] = self.collect_metrics_for_project(project)
         
-        return metrics, start_date, end_date
+        return metrics
     
-    def format_slack_message(self, metrics, start_date, end_date):
+    def format_slack_message(self, metrics):
         """Форматує повідомлення для Slack"""
-        message = f"*Control Chart, median time {start_date.strftime('%b %d')}- {end_date.strftime('%b %d')} за київським часом (тест)*\n\n"
+        message = "*Control Chart, median time Sep 1- Sep 5 з 00:01 до 23:59 за київським часом (робочі дні)*\n\n"
         
         for project in self.projects:
             message += f"{project} - {metrics[project]}\n"
@@ -143,30 +149,33 @@ class QAMetricsCollector:
         try:
             response = requests.post(self.slack_webhook, json=payload, timeout=30)
             if response.status_code == 200:
-                print("✅ Метрики успішно відправлені в Slack!")
+                print("Метрики успішно відправлені в Slack!")
             else:
-                print(f"❌ Помилка відправки в Slack: {response.status_code} - {response.text}")
+                print(f"Помилка відправки в Slack: {response.status_code} - {response.text}")
         except Exception as e:
-            print(f"❌ Помилка при відправці: {e}")
+            print(f"Помилка при відправці: {e}")
     
     def run(self):
         """Основний метод для запуску збору та відправки метрик"""
-        print("🚀 Запуск збору QA метрик...")
+        print("Запуск збору QA метрик через Jira REST API...")
         
         try:
-            metrics, start_date, end_date = self.collect_all_metrics()
-            message = self.format_slack_message(metrics, start_date, end_date)
+            metrics = self.collect_all_metrics()
+            message = self.format_slack_message(metrics)
             
-            print("\n📊 Зібрані метрики:")
+            print(f"\nЗібрані метрики:")
             print(message)
-            print("\n📤 Відправляю в Slack...")
+            print("\nВідправляю в Slack...")
             
             self.send_to_slack(message)
             
         except Exception as e:
-            error_message = f"❌ Помилка при збиранні метрик: {e}"
+            error_message = f"Помилка при збиранні метрик: {e}"
             print(error_message)
+            
+            # Відправляємо повідомлення про помилку в Slack
+            self.send_to_slack(f"Помилка при генерації Control Chart метрик:\n```{error_message}```")
 
 if __name__ == "__main__":
-    collector = QAMetricsCollector()
+    collector = JiraMetricsCollector()
     collector.run()
