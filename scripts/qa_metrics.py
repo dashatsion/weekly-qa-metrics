@@ -68,10 +68,9 @@ class JiraMetricsCollector:
                         break
             
             if qa_transition_time:
-                # Рахуємо різницю в годинах (спрощений підхід)
-                time_diff = qa_transition_time - created_time
-                hours = time_diff.total_seconds() / 3600
-                return max(0, hours)  # не може бути негативним
+                # Рахуємо робочі години замість календарних
+                working_hours = self.calculate_working_hours(created_time, qa_transition_time)
+                return max(0, working_hours)  # не може бути негативним
             
             return None
             
