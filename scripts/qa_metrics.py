@@ -155,7 +155,12 @@ class SimpleJiraClient:
         
         metrics = {}
         for project in self.projects:
-            print(f"Обробляю проект {project}...")
+            print(f"\n🔍 Обробляю проект {project}...")
+            
+            # Спочатку debug статуси
+            self.debug_project_statuses(project)
+            
+            # Потім збираємо метрики
             metrics[project] = self.get_ready_for_qa_metrics(project, start_date, end_date)
         
         return metrics, start_date, end_date
