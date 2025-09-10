@@ -4,9 +4,8 @@ import requests
 from datetime import datetime, timedelta
 import pytz
 from statistics import median
-import json
 
-class SimpleJiraClient:
+class QAMetricsCollector:
     def __init__(self):
         self.jira_email = os.environ['JIRA_EMAIL']
         self.jira_token = os.environ['JIRA_API_TOKEN']
@@ -33,109 +32,73 @@ class SimpleJiraClient:
             'fields': 'created,status'
         }
         
-        response = self.session.get(url, params=params, timeout=60)
-        response.raise_for_status()
+        print(f"Запит до: {url}")
+        print(f"JQL: {jql}")
         
-        return response.json()['issues']
+        response = self.session.get(url, params=params, timeout=60)
+        print(f"Статус відповіді: {response.status_code}")
+        
+        response.raise_for_status()
+        data = response.json()
+        
+        print(f"Знайдено issues: {len(data['issues'])}")
+        return data['issues']
     
     def get_date_range(self):
-        """Отримує діапазон дат за минулий робочий тиждень у київському часі"""
+        """Отримує діапазон дат за поточний тиждень для тестування"""
         kyiv_tz = pytz.timezone('Europe/Kiev')
         now = datetime.now(kyiv_tz)
         
-        # Тимчасово: візьмемо поточний тиждень для тестування
-        # Знаходимо понеділок поточного тижня
-        days_since_monday = now.weekday()
-        monday_this_week = now - timedelta(days=days_since_monday)
-        friday_this_week = monday_this_week + timedelta(days=4)
-        
-        # Встановлюємо час: 00:01 понеділка до 23:59 п'ятниці
-        start_date = monday_this_week.replace(hour=0, minute=1, second=0, microsecond=0)
-        end_date = friday_this_week.replace(hour=23, minute=59, second=59, microsecond=999999)
+        # Беремо останні 7 днів для тестування
+        start_date = now - timedelta(days=7)
+        end_date = now
         
         return start_date, end_date
-    
-    def is_working_day(self, date):
-        """Перевіряє чи є день робочим (понеділок-п'ятниця)"""
-        return date.weekday() < 5
-    
-    def calculate_working_hours(self, start_time, end_time):
-        """Рахує кількість робочих годин між двома датами"""
-        kyiv_tz = pytz.timezone('Europe/Kiev')
-        
-        # Конвертуємо в київський час
-        if start_time.tzinfo is None:
-            start_time = kyiv_tz.localize(start_time)
-        else:
-            start_time = start_time.astimezone(kyiv_tz)
-            
-        if end_time.tzinfo is None:
-            end_time = kyiv_tz.localize(end_time)
-        else:
-            end_time = end_time.astimezone(kyiv_tz)
-        
-        total_hours = 0
-        current_date = start_time.date()
-        end_date = end_time.date()
-        
-        while current_date <= end_date:
-            if self.is_working_day(datetime.combine(current_date, datetime.min.time())):
-                if current_date == start_time.date() and current_date == end_date:
-                    # Той самий день
-                    total_hours += (end_time - start_time).total_seconds() / 3600
-                elif current_date == start_time.date():
-                    # Перший день
-                    end_of_day = datetime.combine(current_date, datetime.min.time()).replace(hour=23, minute=59, tzinfo=kyiv_tz)
-                    total_hours += (end_of_day - start_time).total_seconds() / 3600
-                elif current_date == end_date:
-                    # Останній день
-                    start_of_day = datetime.combine(current_date, datetime.min.time()).replace(hour=0, minute=1, tzinfo=kyiv_tz)
-                    total_hours += (end_time - start_of_day).total_seconds() / 3600
-                else:
-                    # Повний робочий день (24 години)
-                    total_hours += 24
-            
-            current_date += timedelta(days=1)
-        
-        return total_hours
     
     def get_ready_for_qa_metrics(self, project, start_date, end_date):
         """Отримує метрики Ready For QA для проекту за період"""
         
-        # JQL запит
-        jql = f'project = {project} AND status changed to "Ready For QA" DURING ("{start_date.strftime("%Y-%m-%d %H:%M")}", "{end_date.strftime("%Y-%m-%d %H:%M")}")'
+        print(f"\n=== Обробляю проект {project} ===")
+        
+        # Спочатку подивимося які issues взагалі є
+        jql_all = f'project = {project} AND created >= "{start_date.strftime("%Y-%m-%d")}"'
         
         try:
-            issues = self.search_issues(jql)
-            ready_times = []
+            all_issues = self.search_issues(jql_all, max_results=50)
             
-            for issue in issues:
-                # Знаходимо час переходу в Ready For QA
-                if 'changelog' in issue and 'histories' in issue['changelog']:
-                    for history in issue['changelog']['histories']:
-                        for item in history['items']:
-                            if (item['field'] == 'status' and 
-                                item['toString'] == 'Ready For QA'):
-                                
-                                transition_time = datetime.strptime(
-                                    history['created'][:19], '%Y-%m-%dT%H:%M:%S'
-                                )
-                                
-                                # Час створення таску
-                                creation_time = datetime.strptime(
-                                    issue['fields']['created'][:19], '%Y-%m-%dT%H:%M:%S'
-                                )
-                                
-                                # Рахуємо робочі години
-                                working_hours = self.calculate_working_hours(creation_time, transition_time)
-                                ready_times.append(working_hours)
-                                break
+            print(f"Всього issues в {project} за період: {len(all_issues)}")
             
-            if ready_times:
-                median_hours = median(ready_times)
-                return self.format_time(median_hours)
+            # Показуємо статуси
+            if all_issues:
+                print("Статуси знайдених issues:")
+                for issue in all_issues[:10]:  # показуємо перші 10
+                    status = issue['fields']['status']['name']
+                    print(f"  {issue['key']}: {status}")
+            
+            # Тепер шукаємо з точним статусом з вашої Jira
+            jql_qa = f'project = {project} AND status = "Ready For QA"'
+            qa_issues = self.search_issues(jql_qa, max_results=50)
+            
+            if qa_issues:
+                print(f"Issues зі статусом 'Ready For QA': {len(qa_issues)}")
+                for issue in qa_issues:
+                    print(f"  - {issue['key']}")
             else:
-                return "0h 0m"
+                print("Не знайдено issues зі статусом 'Ready For QA'")
+                
+                # Спробуємо варіанти
+                variants = ["Ready for QA", "READY FOR QA", "Ready for Testing"]
+                for variant in variants:
+                    jql_variant = f'project = {project} AND status = "{variant}"'
+                    try:
+                        variant_issues = self.search_issues(jql_variant, max_results=10)
+                        if variant_issues:
+                            print(f"Знайдено {len(variant_issues)} issues зі статусом '{variant}'")
+                            break
+                    except:
+                        continue
+            
+            return "0h 0m"  # Поки що повертаємо 0, поки не знайдемо правильний статус
                 
         except Exception as e:
             print(f"Помилка при отриманні метрик для {project}: {e}")
@@ -155,19 +118,13 @@ class SimpleJiraClient:
         
         metrics = {}
         for project in self.projects:
-            print(f"\n🔍 Обробляю проект {project}...")
-            
-            # Спочатку debug статуси
-            self.debug_project_statuses(project)
-            
-            # Потім збираємо метрики
             metrics[project] = self.get_ready_for_qa_metrics(project, start_date, end_date)
         
         return metrics, start_date, end_date
     
     def format_slack_message(self, metrics, start_date, end_date):
         """Форматує повідомлення для Slack"""
-        message = f"*Control Chart, median time {start_date.strftime('%b %d')}- {end_date.strftime('%b %d')} з 00:01 до 23:59 за київським часом (робочі дні)*\n\n"
+        message = f"*Control Chart, median time {start_date.strftime('%b %d')}- {end_date.strftime('%b %d')} за київським часом (тест)*\n\n"
         
         for project in self.projects:
             message += f"{project} - {metrics[project]}\n"
@@ -209,10 +166,7 @@ class SimpleJiraClient:
         except Exception as e:
             error_message = f"❌ Помилка при збиранні метрик: {e}"
             print(error_message)
-            
-            # Відправляємо повідомлення про помилку в Slack
-            self.send_to_slack(f"🚨 Помилка при генерації Control Chart метрик:\n```{error_message}```")
 
 if __name__ == "__main__":
-    collector = SimpleJiraClient()
+    collector = QAMetricsCollector()
     collector.run()
